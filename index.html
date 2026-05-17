@@ -1165,7 +1165,7 @@ lastEditedId:null,zoomItem:null,
 sortOrder:"newest",
 devMode:false,
 dismissedPairs:new Set(),
-lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,relinkQueue:[],relinkBusy:false,relinkPhase:"idle"};
+lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,relinkQueue:[],relinkBusy:false,relinkPhase:"idle",scanResults:null};
 
 function emptyForm(){return{name:"",type:"貼紙",brand:"",location:"",tags:[],photo:null,photoRatio:null,photoEmb:null,note:"",price:"",currency:"TWD",store:"",purchaseDate:"",quantity:1,tripId:null}}
 
@@ -3808,23 +3808,22 @@ async function uploadRelinkResults(){
 
 /* ============== BROKEN PHOTO SCANNER ============== */
 function showBrokenScanModal(){
-  /* State for scan progress */
-  const total=state.items.length;
-  const results={done:0,broken:[],healthy:0,noPhoto:0};
-  let scanCanceled=false;
+  /* Initialize fresh scan results */
+  state.scanResults={broken:[],healthy:[],scanning:true,done:0,total:state.items.length,noPhoto:0,canceled:false};
 
   function renderModalContent(content){
     content.innerHTML="";
+    const sr=state.scanResults;
     content.appendChild(h("div",{class:"text-center mb-4"},
       h("span",{class:"stamp tilt-l"},"🔍 SCAN · 掃描壞圖"),
       h("div",{class:"font-display text-xl mt-3"},"Broken Photo Scanner")
     ));
 
-    if(results.done<total){
+    if(sr.scanning){
       /* In-progress UI */
-      const pct=total?Math.round(results.done/total*100):0;
+      const pct=sr.total?Math.round(sr.done/sr.total*100):0;
       content.appendChild(h("div",{class:"text-center"},
-        h("div",{class:"font-display text-3xl"},results.done+" / "+total),
+        h("div",{class:"font-display text-3xl"},sr.done+" / "+sr.total),
         h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.14em"}},"SCANNING...")
       ));
       const pbarBg=h("div",{style:{background:"var(--line-2)",height:"6px",borderRadius:"3px",overflow:"hidden",margin:"14px 0"}});
@@ -3832,97 +3831,185 @@ function showBrokenScanModal(){
       content.appendChild(pbarBg);
       content.appendChild(h("div",{class:"flex justify-around mt-3 mb-2",style:{fontSize:"12px"}},
         h("div",{class:"text-center"},
-          h("div",{class:"font-display",style:{fontSize:"18px",color:"#3A5C2A"}},results.healthy),
+          h("div",{class:"font-display",style:{fontSize:"18px",color:"#3A5C2A"}},sr.healthy.length),
           h("div",{class:"font-mono text-xs",style:{color:"var(--mute)"}},"✓ HEALTHY")
         ),
         h("div",{class:"text-center"},
-          h("div",{class:"font-display",style:{fontSize:"18px",color:"#6B2218"}},results.broken.length),
+          h("div",{class:"font-display",style:{fontSize:"18px",color:"#6B2218"}},sr.broken.length),
           h("div",{class:"font-mono text-xs",style:{color:"var(--mute)"}},"⚠ BROKEN")
         ),
         h("div",{class:"text-center"},
-          h("div",{class:"font-display",style:{fontSize:"18px",color:"var(--mute)"}},results.noPhoto),
+          h("div",{class:"font-display",style:{fontSize:"18px",color:"var(--mute)"}},sr.noPhoto),
           h("div",{class:"font-mono text-xs",style:{color:"var(--mute)"}},"○ NO PHOTO")
         )
       ));
-      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>{scanCanceled=true;setS({modal:null})}},"× 停止掃描"));
-    } else {
-      /* Done UI - show results */
-      content.appendChild(h("div",{class:"text-center mb-3"},
-        h("div",{class:"font-display text-2xl"},results.broken.length+" 張壞圖檔"),
-        h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.1em"}},`掃描 ${total} 件 · 健康 ${results.healthy} · 壞 ${results.broken.length} · 無圖 ${results.noPhoto}`)
-      ));
-
-      if(results.broken.length===0){
-        content.appendChild(h("div",{class:"text-center py-6"},
-          h("div",{style:{fontSize:"48px"}},"🎉"),
-          h("div",{class:"font-display text-lg mt-2"},"All photos OK"),
-          h("div",{class:"font-mono text-xs mt-2",style:{color:"var(--mute)"}},"沒有壞圖檔了!")
-        ));
-      } else {
-        /* List of broken items */
-        const list=h("div",{class:"space-y-1.5",style:{maxHeight:"50vh",overflowY:"auto",border:"1px solid var(--line)",borderRadius:"4px",padding:"6px",background:"#fff"}});
-        results.broken.forEach(it=>{
-          const row=h("button",{class:"press w-full",style:{
-            display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px",
-            background:"#fff",border:"1px solid var(--line-2)",borderRadius:"3px",
-            cursor:"pointer",textAlign:"left",fontFamily:"inherit"
-          },onclick:()=>{
-            state.lookupReturn=true;
-            setS({modal:null,view:"detail",selected:it});
-          }});
-          /* placeholder thumbnail */
-          row.appendChild(h("div",{style:{width:"36px",height:"36px",background:"var(--line-2)",borderRadius:"2px",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:"0",fontSize:"16px",color:"var(--ink-3)"}},"?"));
-          const txt=h("div",{class:"flex-1 min-w-0"});
-          txt.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"var(--accent-dark,#5C4828)",letterSpacing:"0.05em"}},getArchiveNo(it)));
-          txt.appendChild(h("div",{style:{fontSize:"12px",color:"var(--ink-2)",marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},(it.brand||"無品牌")+(it.location?" · 📍 "+it.location:"")));
-          row.appendChild(txt);
-          row.appendChild(h("div",{style:{color:"var(--ink-3)",fontSize:"16px"}},"›"));
-          list.appendChild(row);
-        });
-        content.appendChild(list);
-        content.appendChild(h("div",{class:"font-mono text-xs mt-3",style:{color:"var(--mute)",letterSpacing:"0.06em",padding:"0 4px",lineHeight:1.55}},
-          "💡 點任一項跳到詳情頁,按 EDIT → TAP TO CHANGE 上傳新照片 → FILE 存檔。"
-        ));
-      }
-      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null})},"× 關閉"));
+      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>{sr.canceled=true;setS({modal:null})}},"× 停止掃描"));
+      return;
     }
+
+    /* === Done: show summary === */
+    const remaining=sr.broken.filter(b=>!b._repaired);
+    content.appendChild(h("div",{class:"text-center mb-3"},
+      h("div",{class:"font-display text-2xl"},remaining.length+" 張待修復"),
+      h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.1em"}},
+        `掃描 ${sr.total} · 健康 ${sr.healthy.length} · 已修 ${sr.broken.length-remaining.length} · 待修 ${remaining.length} · 無圖 ${sr.noPhoto}`
+      )
+    ));
+
+    if(remaining.length===0&&sr.broken.length>0){
+      content.appendChild(h("div",{class:"text-center py-6"},
+        h("div",{style:{fontSize:"48px"}},"🎉"),
+        h("div",{class:"font-display text-lg mt-2"},"All repaired!"),
+        h("div",{class:"font-mono text-xs mt-2",style:{color:"var(--mute)"}},"全部壞圖檔都修好了!")
+      ));
+      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null})},"× 關閉"));
+      return;
+    }
+
+    if(remaining.length===0){
+      content.appendChild(h("div",{class:"text-center py-6"},
+        h("div",{style:{fontSize:"48px"}},"✓"),
+        h("div",{class:"font-display text-lg mt-2"},"All photos OK"),
+        h("div",{class:"font-mono text-xs mt-2",style:{color:"var(--mute)"}},"沒有壞圖檔!")
+      ));
+      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null})},"× 關閉"));
+      return;
+    }
+
+    /* === List rows: each is a paper-card with full info === */
+    const list=h("div",{class:"space-y-2.5",style:{maxHeight:"60vh",overflowY:"auto",padding:"6px 2px"}});
+    remaining.forEach(it=>{
+      /* Find top-2 visual similar healthy items */
+      let refs=[];
+      if(it.photoEmb&&typeof __base64ToFloat32==="function"){
+        try{
+          const t=__base64ToFloat32(it.photoEmb);
+          if(t){
+            for(const h2 of sr.healthy){
+              if(!h2.photoEmb)continue;
+              const v=__base64ToFloat32(h2.photoEmb);
+              if(!v)continue;
+              const sim=cosineSimilarity(t,v);
+              refs.push({item:h2,sim});
+            }
+            refs.sort((a,b)=>b.sim-a.sim);
+            refs=refs.slice(0,2);
+          }
+        }catch(e){console.warn("[Scan] visual refs error",e)}
+      }
+
+      const card=h("div",{style:{padding:"10px 11px",background:"#fff",border:"1px solid var(--line)",borderRadius:"4px"}});
+
+      /* Top line: archive# + brand + location + date */
+      const top=h("div",{class:"flex items-start justify-between gap-2",style:{marginBottom:"6px"}});
+      const topLeft=h("div",{class:"flex-1 min-w-0"});
+      topLeft.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"#5C4828",letterSpacing:"0.05em",fontWeight:600}},getArchiveNo(it)));
+      topLeft.appendChild(h("div",{style:{fontSize:"13px",color:"var(--ink-2)",marginTop:"1px"}},
+        (it.brand||"無品牌")+(it.name?" · "+it.name:"")
+      ));
+      const locDate=[];
+      if(it.location)locDate.push("📍 "+it.location);
+      if(it.addedAt)locDate.push(it.addedAt.slice(5,10).replace("-","/"));
+      if(locDate.length)topLeft.appendChild(h("div",{class:"font-mono",style:{fontSize:"10.5px",color:"var(--ink-3)",marginTop:"1px"}},locDate.join(" · ")));
+      top.appendChild(topLeft);
+      /* "go to detail" link icon */
+      top.appendChild(h("button",{class:"press",style:{fontSize:"15px",color:"var(--ink-3)",background:"none",border:"none",cursor:"pointer",padding:"0 4px"},onclick:()=>{
+        state.lookupReturn=true;setS({modal:null,view:"detail",selected:it});
+      }},"›"));
+      card.appendChild(top);
+
+      /* Tags */
+      if(it.tags&&it.tags.length){
+        const tagsRow=h("div",{class:"flex flex-wrap gap-1",style:{marginBottom:"8px"}});
+        it.tags.forEach(t=>{
+          tagsRow.appendChild(h("span",{class:"font-mono",style:{
+            padding:"1.5px 7px",fontSize:"10.5px",background:"#EFE6D2",color:"var(--ink-2)",borderRadius:"2px",letterSpacing:"0.02em"
+          }},"#"+t));
+        });
+        card.appendChild(tagsRow);
+      }
+
+      /* Visual refs row */
+      if(refs.length){
+        const refsRow=h("div",{class:"flex items-center gap-2",style:{marginBottom:"8px",padding:"6px",background:"var(--paper)",borderRadius:"3px",border:"1px dashed var(--line-2)"}});
+        refsRow.appendChild(h("div",{class:"font-mono",style:{fontSize:"9.5px",color:"var(--mute)",letterSpacing:"0.1em",flexShrink:"0"}},"VISUAL\nREF"));
+        refs.forEach(r=>{
+          const thumb=h("div",{style:{width:"42px",height:"42px",borderRadius:"3px",overflow:"hidden",border:"1px solid var(--line-2)",position:"relative",flexShrink:"0",cursor:"pointer"},title:`相似度 ${Math.round(r.sim*100)}% · #${r.item.archiveNum}`,onclick:()=>{
+            state.lookupReturn=true;setS({modal:null,view:"detail",selected:r.item});
+          }});
+          if(r.item.photo){
+            const im=h("img",{style:{width:"100%",height:"100%",objectFit:"cover"}});
+            im.src=r.item.photo;
+            thumb.appendChild(im);
+          }
+          thumb.appendChild(h("div",{class:"font-mono",style:{
+            position:"absolute",bottom:"0",left:"0",right:"0",
+            background:"rgba(44,36,25,.75)",color:"#fff",
+            fontSize:"8px",textAlign:"center",padding:"1px 0",letterSpacing:"0.04em"
+          }},Math.round(r.sim*100)+"%"));
+          refsRow.appendChild(thumb);
+        });
+        refsRow.appendChild(h("div",{style:{fontSize:"10.5px",color:"var(--ink-3)",lineHeight:1.4,flex:"1"}},"妳記憶中此貼紙的風格?"));
+        card.appendChild(refsRow);
+      }
+
+      /* Upload button + hidden file input */
+      const fileInp=h("input",{type:"file",accept:"image/*",class:"hidden",onchange:async(e)=>{
+        const f=e.target.files[0];if(!f)return;
+        await repairBrokenPhoto(it,f);
+      }});
+      card.appendChild(fileInp);
+      const upBtn=h("button",{class:"press w-full",style:{
+        padding:"8px",background:"var(--ink)",color:"var(--paper)",borderRadius:"3px",border:"none",
+        cursor:"pointer",fontSize:"12px",fontWeight:600,letterSpacing:"0.04em",
+        display:"flex",alignItems:"center",justifyContent:"center",gap:"6px"
+      },onclick:()=>fileInp.click()});
+      upBtn.appendChild(document.createTextNode("📷 從相簿選照片補上"));
+      card.appendChild(upBtn);
+
+      list.appendChild(card);
+    });
+    content.appendChild(list);
+
+    content.appendChild(h("div",{class:"font-mono text-xs mt-3",style:{color:"var(--mute)",letterSpacing:"0.06em",padding:"0 4px",lineHeight:1.55}},
+      "💡 上傳後系統會用 ML 比對:若跟原始特徵差距大會提示確認。"
+    ));
+    content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null})},"× 關閉(掃描結果保留,可隨時點 SCAN 重開)"));
   }
 
   state.modal={render:renderModalContent};
   render();
 
-  /* Async batch scan — concurrency 6 */
+  /* === Async batch scan === */
   (async()=>{
     const CONCURRENCY=6;
     let cursor=0;
+    const sr=state.scanResults;
     async function testOne(item){
-      if(!item.photo){results.noPhoto++;return}
+      if(!item.photo){sr.noPhoto++;return}
       return new Promise(resolve=>{
         const img=new Image();
         let settled=false;
         const finish=ok=>{
           if(settled)return;
           settled=true;
-          if(ok)results.healthy++;
-          else results.broken.push(item);
+          if(ok)sr.healthy.push(item);
+          else sr.broken.push(item);
           resolve();
         };
         img.onload=()=>finish(true);
         img.onerror=()=>finish(false);
-        /* timeout 10s = treat as broken */
         setTimeout(()=>finish(false),10000);
         img.src=item.photo;
       });
     }
     async function worker(){
-      while(cursor<state.items.length&&!scanCanceled){
+      while(cursor<state.items.length&&!sr.canceled){
         const myIdx=cursor++;
-        const item=state.items[myIdx];
-        await testOne(item);
-        results.done++;
-        /* update UI every 5 items to avoid flicker */
-        if(results.done%5===0||results.done===state.items.length){
-          if(state.modal&&!scanCanceled){
+        await testOne(state.items[myIdx]);
+        sr.done++;
+        if(sr.done%5===0||sr.done===state.items.length){
+          if(state.modal&&!sr.canceled){
             const layer=document.getElementById("modal-layer");
             const inner=layer&&layer.querySelector(".surface");
             if(inner)renderModalContent(inner);
@@ -3933,14 +4020,58 @@ function showBrokenScanModal(){
     const workers=[];
     for(let i=0;i<CONCURRENCY;i++)workers.push(worker());
     await Promise.all(workers);
-    /* final render */
-    if(state.modal&&!scanCanceled){
+    sr.scanning=false;
+    if(state.modal&&!sr.canceled){
       const layer=document.getElementById("modal-layer");
       const inner=layer&&layer.querySelector(".surface");
       if(inner)renderModalContent(inner);
     }
   })();
 }
+
+/* Direct photo repair with ML verification */
+async function repairBrokenPhoto(item,file){
+  try{
+    const result=await compress(file);
+    if(!result.photo){alert("無法處理這張照片");return}
+    /* ML verification */
+    if(result.photoEmb&&item.photoEmb){
+      const v1=__base64ToFloat32(result.photoEmb);
+      const v2=__base64ToFloat32(item.photoEmb);
+      if(v1&&v2){
+        const sim=cosineSimilarity(v1,v2);
+        if(sim<0.85){
+          if(!confirm(`⚠ 上傳的照片跟原 ML 特徵只有 ${Math.round(sim*100)}% 相似,可能不是同一張。\n\n確定要綁定?`))return;
+        } else {
+          console.log(`[Repair] #${item.archiveNum} ML check OK: ${Math.round(sim*100)}%`);
+        }
+      }
+    }
+    /* Upload */
+    const url=await uploadPhoto(item.id,result.photo);
+    item.photo=url;
+    item.photoEmb=result.photoEmb||item.photoEmb;
+    item.photoRatio=result.photoRatio||item.photoRatio;
+    await dbPut("items",item);
+    /* Mark repaired */
+    item._repaired=true;
+    /* Also push into scanResults.healthy so future visual refs can use it */
+    if(state.scanResults){
+      state.scanResults.healthy.push(item);
+    }
+    console.log(`[Repair] ✓ #${item.archiveNum} done`);
+    /* Re-render modal */
+    if(state.modal){
+      const layer=document.getElementById("modal-layer");
+      const inner=layer&&layer.querySelector(".surface");
+      if(inner&&state.modal.render)state.modal.render(inner);
+    }
+  }catch(err){
+    alert("修復失敗: "+err.message);
+    console.error("[Repair]",err);
+  }
+}
+
 
 /* ============== LOCATION MANAGER MODAL ============== */
 function showLocationManagerModal(){
