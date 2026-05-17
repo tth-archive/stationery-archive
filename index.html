@@ -1165,7 +1165,7 @@ lastEditedId:null,zoomItem:null,
 sortOrder:"newest",
 devMode:false,
 dismissedPairs:new Set(),
-lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false};
+lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,relinkQueue:[],relinkBusy:false,relinkPhase:"idle"};
 
 function emptyForm(){return{name:"",type:"貼紙",brand:"",location:"",tags:[],photo:null,photoRatio:null,photoEmb:null,note:"",price:"",currency:"TWD",store:"",purchaseDate:"",quantity:1,tripId:null}}
 
@@ -1527,7 +1527,7 @@ let imeComposing={};
 function makeTextInput(opts){const inp=h("input",Object.assign({type:"text",class:"inp"},opts.attrs||{}));const role=opts.role||Math.random().toString(36).slice(2,8);inp.dataset.role=role;if(opts.value!=null)inp.value=opts.value;inp.addEventListener("compositionstart",()=>imeComposing[role]=true);inp.addEventListener("compositionend",e=>{imeComposing[role]=false;opts.oninput&&opts.oninput(e.target.value)});inp.addEventListener("input",e=>{if(!imeComposing[role])opts.oninput&&opts.oninput(e.target.value)});if(opts.onkeydown)inp.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.isComposing)opts.onkeydown(e)});return inp}
 
 /* ============== RENDER ENTRY ============== */
-function render(){const active=document.activeElement;const role=active?.dataset?.role;const pos=active?.selectionStart;const root=document.getElementById('app');root.innerHTML='';const v={login:viewLogin,loading:viewLoading,shelf:viewShelf,gallery:viewGallery,add:viewAdd,detail:viewDetail,stats:viewStats,trips:viewTrips,tripDetail:viewTripDetail,tripForm:viewTripForm,tagManage:viewTagManage,tagBrowse:viewTagBrowse,settings:viewSettings,lookup:viewLookup}[state.view]||viewShelf;root.appendChild(v());renderModal();if(role){const ni=document.querySelector(`[data-role="${role}"]`);if(ni){ni.focus();if(pos!=null){try{ni.setSelectionRange(pos,pos)}catch(e){}}}}}
+function render(){const active=document.activeElement;const role=active?.dataset?.role;const pos=active?.selectionStart;const root=document.getElementById('app');root.innerHTML='';const v={login:viewLogin,loading:viewLoading,shelf:viewShelf,gallery:viewGallery,add:viewAdd,detail:viewDetail,stats:viewStats,trips:viewTrips,tripDetail:viewTripDetail,tripForm:viewTripForm,tagManage:viewTagManage,tagBrowse:viewTagBrowse,settings:viewSettings,lookup:viewLookup,relinkPhotos:viewRelinkPhotos}[state.view]||viewShelf;root.appendChild(v());renderModal();if(role){const ni=document.querySelector(`[data-role="${role}"]`);if(ni){ni.focus();if(pos!=null){try{ni.setSelectionRange(pos,pos)}catch(e){}}}}}
 
 function viewLoading(){
   const w=h("div",{class:"min-h-screen flex flex-col items-center justify-center",style:{padding:"32px"}});
@@ -3538,6 +3538,273 @@ w.appendChild(body);return w;
 /* ============== VIEW: SETTINGS ============== */
 
 
+
+/* ============== VIEW: RELINK PHOTOS (照片重新綁定 — ML 自動匹配) ============== */
+function viewRelinkPhotos(){
+  const w=h("div",{class:"min-h-screen pb-24","data-view":"relinkPhotos"});
+
+  /* Header */
+  const hdr=h("div",{class:"sticky top-0 z-10 px-4 py-3 flex items-center gap-3",style:{background:"var(--paper)",borderBottom:"1px solid var(--line)"}});
+  hdr.appendChild(h("button",{class:"text-2xl press",style:{color:"var(--ink-3)"},onclick:()=>{
+    if(state.relinkBusy){if(!confirm("處理中,確定要離開?"))return}
+    state.relinkQueue=[];state.relinkBusy=false;state.relinkPhase="idle";
+    setS({view:"settings"});
+  }},"←"));
+  hdr.appendChild(h("div",{class:"flex-1"},
+    h("div",{class:"font-display text-lg leading-none"},"Relink Photos"),
+    h("div",{class:"font-mono text-xs mt-0.5",style:{color:"var(--ink-3)",letterSpacing:"0.18em"}},"重 新 綁 定 照 片")
+  ));
+  hdr.appendChild(h("span",{class:"stamp tilt-l",style:{borderColor:"#5C8DAC",color:"#2D4D6A",background:"rgba(92,141,172,.08)"}},"ML"));
+  w.appendChild(hdr);
+
+  const body=h("div",{class:"px-4 pt-4 pb-4 max-w-md mx-auto"});
+
+  /* === IDLE state: instruction + file picker === */
+  if(state.relinkPhase==="idle"){
+    body.appendChild(h("div",{style:{padding:"14px",background:"#FFF8E1",border:"1px solid #E8C97D",borderRadius:"4px",fontSize:"13px",color:"var(--ink-2)",lineHeight:1.65,marginBottom:"16px"}},
+      h("div",{class:"font-mono mb-2",style:{fontSize:"11px",letterSpacing:"0.14em",color:"#7C5C00"}},"💡 怎麼運作"),
+      h("div",{},"1. 選妳手機相簿裡的照片(可多選)"),
+      h("div",{},"2. App 算每張照片的 ML 特徵向量"),
+      h("div",{},"3. 跟現有 ",h("b",{},state.items.filter(it=>it.photoEmb).length+" 筆")," 的特徵比對"),
+      h("div",{},"4. 顯示匹配結果,妳確認後一鍵上傳")
+    ));
+
+    const fileInp=h("input",{type:"file",accept:"image/*",multiple:true,class:"hidden",onchange:async e=>{
+      const files=Array.from(e.target.files||[]);
+      if(!files.length)return;
+      state.relinkBusy=true;
+      state.relinkPhase="processing";
+      state.relinkQueue=files.map(f=>({file:f,status:"pending",progress:0}));
+      render();
+      await processRelinkQueue();
+    }});
+    body.appendChild(fileInp);
+
+    const pickBtn=h("button",{class:"press w-full",style:{
+      padding:"14px",background:"var(--ink)",color:"var(--paper)",borderRadius:"4px",
+      border:"none",cursor:"pointer",fontSize:"14px",fontWeight:600,letterSpacing:"0.04em"
+    },onclick:()=>fileInp.click()});
+    pickBtn.appendChild(document.createTextNode("📷 選擇照片"));
+    body.appendChild(pickBtn);
+
+    body.appendChild(h("div",{class:"font-mono mt-3",style:{fontSize:"11px",color:"var(--mute)",letterSpacing:"0.06em",lineHeight:1.55,padding:"0 4px"}},
+      "💡 建議一次 50 張內,手機才不會卡。可多次重複此流程處理完所有照片。"
+    ));
+  }
+
+  /* === PROCESSING state: progress list === */
+  if(state.relinkPhase==="processing"){
+    const done=state.relinkQueue.filter(q=>q.status!=="pending"&&q.status!=="processing").length;
+    const total=state.relinkQueue.length;
+    body.appendChild(h("div",{class:"mb-4 text-center"},
+      h("div",{class:"font-display text-2xl"},done+" / "+total),
+      h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.14em"}},"PROCESSING...")
+    ));
+    /* progress bar */
+    const pbarBg=h("div",{style:{background:"var(--line-2)",height:"6px",borderRadius:"3px",overflow:"hidden",marginBottom:"16px"}});
+    const pbar=h("div",{style:{background:"var(--ink)",height:"100%",width:(total?Math.round(done/total*100):0)+"%",transition:"width .2s"}});
+    pbarBg.appendChild(pbar);
+    body.appendChild(pbarBg);
+  }
+
+  /* === REVIEW state: show results === */
+  if(state.relinkPhase==="review"){
+    const autoCount=state.relinkQueue.filter(q=>q.status==="auto").length;
+    const confirmCount=state.relinkQueue.filter(q=>q.status==="confirm").length;
+    const noMatchCount=state.relinkQueue.filter(q=>q.status==="no-match").length;
+    const errorCount=state.relinkQueue.filter(q=>q.status==="error").length;
+
+    body.appendChild(h("div",{class:"text-center mb-4"},
+      h("div",{class:"font-display text-2xl"},"匹配結果"),
+      h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.14em"}},state.relinkQueue.length+" 張處理完成")
+    ));
+
+    /* summary stamps */
+    const summary=h("div",{class:"flex flex-wrap gap-2 justify-center mb-4"});
+    if(autoCount)summary.appendChild(h("span",{class:"font-mono",style:{padding:"4px 10px",background:"#D8E8D0",color:"#3A5C2A",borderRadius:"3px",fontSize:"11px",border:"1px solid #88996B55"}},"✓ AUTO "+autoCount));
+    if(confirmCount)summary.appendChild(h("span",{class:"font-mono",style:{padding:"4px 10px",background:"#FFF1CD",color:"#7C5C00",borderRadius:"3px",fontSize:"11px",border:"1px solid #C9A96155"}},"? CONFIRM "+confirmCount));
+    if(noMatchCount)summary.appendChild(h("span",{class:"font-mono",style:{padding:"4px 10px",background:"#F0D5D0",color:"#6B2218",borderRadius:"3px",fontSize:"11px",border:"1px solid #B84A3A55"}},"✗ NO MATCH "+noMatchCount));
+    if(errorCount)summary.appendChild(h("span",{class:"font-mono",style:{padding:"4px 10px",background:"#E8DECC",color:"#5C4828",borderRadius:"3px",fontSize:"11px",border:"1px solid #8B6F4755"}},"⚠ ERROR "+errorCount));
+    body.appendChild(summary);
+
+    /* result list */
+    const list=h("div",{class:"space-y-2"});
+    state.relinkQueue.forEach((q,idx)=>{
+      const row=h("div",{style:{padding:"10px",background:"#fff",border:"1px solid var(--line)",borderRadius:"4px",display:"flex",gap:"10px"}});
+      /* thumbnail */
+      const thumb=h("div",{style:{width:"56px",height:"56px",background:"var(--line-2)",borderRadius:"3px",overflow:"hidden",flexShrink:"0"}});
+      if(q.photo){
+        const im=h("img",{style:{width:"100%",height:"100%",objectFit:"cover"}});
+        im.src=q.photo;
+        thumb.appendChild(im);
+      }
+      row.appendChild(thumb);
+      /* details */
+      const det=h("div",{class:"flex-1 min-w-0"});
+      if(q.status==="auto"&&q.chosen){
+        det.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"#3A5C2A",fontWeight:600,letterSpacing:"0.1em"}},"✓ AUTO · "+Math.round(q.topSim*100)+"%"));
+        det.appendChild(h("div",{style:{fontSize:"13px",marginTop:"2px"}},"→ #"+(q.chosen.archiveNum||"?")+" "+(q.chosen.brand||"無品牌")));
+        if(q.chosen.location)det.appendChild(h("div",{class:"font-mono",style:{fontSize:"10px",color:"var(--ink-3)"}},"📍 "+q.chosen.location));
+      } else if(q.status==="confirm"){
+        det.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"#7C5C00",fontWeight:600,letterSpacing:"0.1em"}},"? CONFIRM · "+Math.round(q.topSim*100)+"%"));
+        /* candidate buttons */
+        if(q.candidates&&q.candidates.length){
+          q.candidates.forEach((c,ci)=>{
+            const cbtn=h("button",{class:"press",style:{
+              display:"block",width:"100%",textAlign:"left",padding:"5px 8px",marginTop:"3px",
+              background:q.chosen&&q.chosen.id===c.item.id?"var(--ink)":"#FFF8E1",
+              color:q.chosen&&q.chosen.id===c.item.id?"var(--paper)":"var(--ink-2)",
+              border:"1px solid "+(q.chosen&&q.chosen.id===c.item.id?"var(--ink)":"#C9A96155"),
+              borderRadius:"3px",fontSize:"11.5px",cursor:"pointer",fontFamily:"'Noto Sans TC',sans-serif"
+            },onclick:()=>{q.chosen=c.item;render()}});
+            cbtn.textContent="#"+(c.item.archiveNum||"?")+" "+(c.item.brand||"-")+" · "+Math.round(c.sim*100)+"%";
+            det.appendChild(cbtn);
+          });
+          const skipBtn=h("button",{class:"press",style:{
+            display:"block",width:"100%",padding:"5px 8px",marginTop:"3px",
+            background:!q.chosen?"#F0D5D0":"#fff",color:"#6B2218",
+            border:"1px solid #B84A3A55",borderRadius:"3px",fontSize:"11.5px",cursor:"pointer"
+          },onclick:()=>{q.chosen=null;render()}},"× 跳過這張");
+          det.appendChild(skipBtn);
+        }
+      } else if(q.status==="no-match"){
+        det.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"#6B2218",fontWeight:600,letterSpacing:"0.1em"}},"✗ NO MATCH"));
+        det.appendChild(h("div",{class:"font-mono",style:{fontSize:"10.5px",color:"var(--ink-3)",marginTop:"2px"}},"最高相似度: "+Math.round((q.topSim||0)*100)+"%"));
+      } else if(q.status==="error"){
+        det.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"#5C4828",fontWeight:600,letterSpacing:"0.1em"}},"⚠ ERROR"));
+        det.appendChild(h("div",{class:"font-mono",style:{fontSize:"10.5px",color:"var(--ink-3)",marginTop:"2px"}},q.errorMsg||"未知錯誤"));
+      }
+      row.appendChild(det);
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+
+    /* Upload button */
+    const toUpload=state.relinkQueue.filter(q=>(q.status==="auto"||q.status==="confirm")&&q.chosen);
+    if(toUpload.length){
+      const upBtn=h("button",{class:"press w-full mt-4",style:{
+        padding:"14px",background:"var(--ink)",color:"var(--paper)",borderRadius:"4px",
+        border:"none",cursor:"pointer",fontSize:"14px",fontWeight:600,letterSpacing:"0.04em"
+      },onclick:()=>uploadRelinkResults()});
+      upBtn.appendChild(document.createTextNode("⬆ 一鍵上傳 "+toUpload.length+" 張照片"));
+      body.appendChild(upBtn);
+    }
+
+    body.appendChild(h("button",{class:"press w-full mt-2",style:{
+      padding:"10px",background:"#fff",color:"var(--ink-3)",borderRadius:"4px",
+      border:"1px solid var(--line)",cursor:"pointer",fontSize:"13px"
+    },onclick:()=>{state.relinkQueue=[];state.relinkPhase="idle";render()}},"再選一批照片"));
+  }
+
+  /* === UPLOADING state === */
+  if(state.relinkPhase==="uploading"){
+    const done=state.relinkQueue.filter(q=>q.uploaded||q.uploadError).length;
+    const total=state.relinkQueue.filter(q=>(q.status==="auto"||q.status==="confirm")&&q.chosen).length;
+    body.appendChild(h("div",{class:"mb-4 text-center"},
+      h("div",{class:"font-display text-2xl"},done+" / "+total),
+      h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.14em"}},"UPLOADING...")
+    ));
+    const pbarBg=h("div",{style:{background:"var(--line-2)",height:"6px",borderRadius:"3px",overflow:"hidden"}});
+    const pbar=h("div",{style:{background:"var(--ink)",height:"100%",width:(total?Math.round(done/total*100):0)+"%",transition:"width .2s"}});
+    pbarBg.appendChild(pbar);
+    body.appendChild(pbarBg);
+  }
+
+  /* === DONE state === */
+  if(state.relinkPhase==="done"){
+    const ok=state.relinkQueue.filter(q=>q.uploaded).length;
+    const fail=state.relinkQueue.filter(q=>q.uploadError).length;
+    body.appendChild(h("div",{class:"text-center py-6"},
+      h("span",{class:"stamp tilt-l",style:{borderColor:"#3A5C2A",color:"#3A5C2A",background:"rgba(58,92,42,.06)"}},"✓ DONE · 完成"),
+      h("div",{class:"font-display text-2xl mt-4"},ok+" 張已重新綁定"),
+      fail?h("div",{class:"font-mono text-xs mt-2",style:{color:"#6B2218"}},"失敗 "+fail+" 張"):null
+    ));
+    body.appendChild(h("button",{class:"press w-full mt-4",style:{
+      padding:"12px",background:"var(--ink)",color:"var(--paper)",borderRadius:"4px",
+      border:"none",cursor:"pointer",fontSize:"14px"
+    },onclick:()=>{state.relinkQueue=[];state.relinkPhase="idle";render()}},"再處理一批"));
+    body.appendChild(h("button",{class:"press w-full mt-2",style:{
+      padding:"10px",background:"#fff",color:"var(--ink-3)",borderRadius:"4px",
+      border:"1px solid var(--line)",cursor:"pointer",fontSize:"13px"
+    },onclick:()=>setS({view:"shelf",relinkQueue:[],relinkPhase:"idle"})},"回首頁"));
+  }
+
+  w.appendChild(body);
+  return w;
+}
+
+/* Process the relink queue: compute embeddings, find matches */
+async function processRelinkQueue(){
+  const AUTO_THRESHOLD=0.92;
+  const CONFIRM_THRESHOLD=0.75;
+  for(let idx=0;idx<state.relinkQueue.length;idx++){
+    const q=state.relinkQueue[idx];
+    q.status="processing";
+    if(idx%3===0)render();
+    try{
+      const result=await compress(q.file);
+      q.photo=result.photo;
+      q.photoEmb=result.photoEmb;
+      if(!result.photoEmb){
+        q.status="error";q.errorMsg="無法計算 ML 特徵";continue;
+      }
+      const targetVec=__base64ToFloat32(result.photoEmb);
+      const cands=[];
+      for(const item of state.items){
+        if(!item.photoEmb)continue;
+        const v=__base64ToFloat32(item.photoEmb);
+        if(!v)continue;
+        const sim=cosineSimilarity(targetVec,v);
+        cands.push({item,sim});
+      }
+      cands.sort((a,b)=>b.sim-a.sim);
+      q.candidates=cands.slice(0,3);
+      q.topSim=cands.length?cands[0].sim:0;
+      if(q.topSim>=AUTO_THRESHOLD){
+        q.status="auto";q.chosen=cands[0].item;
+      } else if(q.topSim>=CONFIRM_THRESHOLD){
+        q.status="confirm";q.chosen=cands[0].item;
+      } else {
+        q.status="no-match";q.chosen=null;
+      }
+    }catch(err){
+      q.status="error";q.errorMsg=err.message;
+      console.error("[Relink]",err);
+    }
+  }
+  state.relinkBusy=false;
+  state.relinkPhase="review";
+  render();
+}
+
+/* Upload chosen photos and update items */
+async function uploadRelinkResults(){
+  const toUpload=state.relinkQueue.filter(q=>(q.status==="auto"||q.status==="confirm")&&q.chosen);
+  if(!toUpload.length){alert("沒有可上傳的項目");return}
+  if(!confirm(`確認上傳 ${toUpload.length} 張照片?\n\n這會覆蓋這些貼紙原本的圖片資料。`))return;
+  state.relinkPhase="uploading";
+  state.relinkBusy=true;
+  render();
+  for(const q of toUpload){
+    try{
+      const url=await uploadPhoto(q.chosen.id,q.photo);
+      q.chosen.photo=url;
+      q.chosen.photoEmb=q.photoEmb;
+      q.chosen.photoRatio=q.chosen.photoRatio||null;
+      await dbPut("items",q.chosen);
+      q.uploaded=true;
+      console.log(`[Relink] ✓ #${q.chosen.archiveNum} updated`);
+    }catch(err){
+      q.uploadError=err.message;
+      console.error(`[Relink] ✗ #${q.chosen.archiveNum}`,err);
+    }
+    render();
+  }
+  state.relinkBusy=false;
+  state.relinkPhase="done";
+  render();
+}
+
 /* ============== LOCATION MANAGER MODAL ============== */
 function showLocationManagerModal(){
   state.modal={render:content=>{
@@ -4085,6 +4352,9 @@ dsec.appendChild(h("div",{class:"sec-h"},"DATA",h("span",{class:"zh"},"資料管
 dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"var(--forest)",color:"#fff",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace"},onclick:exportData},"↓ EXPORT BACKUP"));
 const iiR=h("input",{type:"file",accept:".json",class:"hidden",onchange:e=>importData(e,"replace")});dsec.appendChild(iiR);
 const iiM=h("input",{type:"file",accept:".json",class:"hidden",onchange:e=>importData(e,"merge")});dsec.appendChild(iiM);
+/* === Relink photos entry button === */
+dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"#E5DCED",color:"#3D2D4A",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace",border:"1px solid #7A6B8F55"},onclick:()=>setS({view:"relinkPhotos",relinkQueue:[],relinkPhase:"idle"})},"📷 RELINK PHOTOS · 重新綁定照片"));
+
 dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"#DCE5EE",color:"#2D4D6A",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace",border:"1px solid #5C8DAC55"},onclick:()=>iiR.click()},"↑ IMPORT (取代)"));
 dsec.appendChild(h("div",{class:"font-mono mb-3",style:{fontSize:"10px",color:"var(--mute)",letterSpacing:"0.06em",lineHeight:1.5,paddingLeft:"4px"}},"清空現有資料、用備份完整覆蓋（編號一致）"));
 dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"#fff",color:"var(--ink-3)",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace",border:"1px solid var(--line)"},onclick:()=>iiM.click()},"↑ IMPORT (合併)"));
@@ -4245,45 +4515,85 @@ async function importData(e,mode="merge"){
   try{data=JSON.parse(text)}catch(err){alert("檔案不是有效的 JSON");return}
   if(!data.items){alert("檔案格式不正確");return}
   const label=mode==="replace"?"取代":"合併";
-  const note=mode==="replace"?"⚠ 會先清空雲端資料、用備份完整覆蓋":"會加入現有資料、編號可能跳號";
+
+  /* === Count diff防呆: replace 模式且新檔筆數 < 現有 80% 跳警告 === */
+  if(mode==="replace"&&state.items.length>0){
+    const ratio=data.items.length/state.items.length;
+    if(ratio<0.8){
+      const msg=`⚠ 危險!\n\n目前 app 內有 ${state.items.length} 筆\n要匯入的檔案只有 ${data.items.length} 筆\n(只有 ${Math.round(ratio*100)}%)\n\n取代後會永久丟失 ${state.items.length-data.items.length} 筆資料!\n\n確定要繼續?`;
+      if(!confirm(msg))return;
+    }
+  }
+
+  const note=mode==="replace"
+    ?"⚠ 會先清空雲端 Firestore 資料 (Storage 圖檔保留)、用備份覆蓋"
+    :"會加入現有資料、編號可能跳號";
   if(!confirm(`【${label}】匯入 ${data.items.length} 個品項\n\n${note}\n\n繼續？`))return;
-  try{
-    if(mode==="replace"){
-      /* Clear cloud first */
+
+  /* === replace 階段: 只清 Firestore,不刪 Storage 圖檔 === */
+  if(mode==="replace"){
+    try{
       const itemsSnap=await fb.getDocs(fb.collection(fb.db,...userPath("items")));
       for(const d of itemsSnap.docs){
-        try{
-          const photoRef=fb.storageRef(fb.storage,`users/${currentUser.uid}/photos/${d.id}.jpg`);
-          await fb.deleteObject(photoRef);
-        }catch(err){}
-        await fb.deleteDoc(d.ref);
+        try{await fb.deleteDoc(d.ref)}catch(err){console.warn("[Import] del doc fail",d.id,err)}
       }
       const tripsSnap=await fb.getDocs(fb.collection(fb.db,...userPath("trips")));
       for(const d of tripsSnap.docs)await fb.deleteDoc(d.ref);
       state.items=[];state.trips=[];state.customTypes=[];
+      console.log("[Import] cleared Firestore (Storage left intact)");
+    }catch(err){
+      alert("清空 Firestore 失敗:"+err.message);return;
     }
-    /* Import items */
-    for(const i of data.items){
-      const ni={...i};
-      /* Preserve archiveNum (from old export, this may be the IndexedDB id) */
-      if(!ni.archiveNum&&typeof i.id==="number")ni.archiveNum=i.id;
-      delete ni.id;
-      const id=await dbAdd("items",ni);
-      state.items.push({...ni,id});
+  }
+
+  /* === 逐筆 import,單筆失敗不影響其他、有 retry === */
+  const failed=[];
+  let success=0;
+  for(let idx=0;idx<data.items.length;idx++){
+    const i=data.items[idx];
+    let attempt=0,ok=false;
+    while(attempt<3&&!ok){
+      try{
+        const ni={...i};
+        if(!ni.archiveNum&&typeof i.id==="number")ni.archiveNum=i.id;
+        delete ni.id;
+        const id=await dbAdd("items",ni);
+        state.items.push({...ni,id});
+        ok=true;success++;
+      }catch(err){
+        attempt++;
+        console.warn(`[Import] item ${idx+1}/${data.items.length} attempt ${attempt} failed:`,err.message);
+        if(attempt<3)await new Promise(r=>setTimeout(r,500*attempt));
+      }
     }
-    if(data.trips)for(const t of data.trips){
+    if(!ok)failed.push({archiveNum:i.archiveNum,brand:i.brand,name:i.name});
+  }
+
+  /* === Trips and metadata === */
+  if(data.trips)for(const t of data.trips){
+    try{
       const nt={...t};delete nt.id;
       const id=await dbAdd("trips",nt);
       state.trips.push({...nt,id});
-    }
+    }catch(err){console.warn("[Import] trip fail",err)}
+  }
+  try{
     if(data.customTypes){state.customTypes=data.customTypes;await dbSetSetting("customTypes",state.customTypes)}
     if(data.tagGroups){state.tagGroups=data.tagGroups;await saveTagGroups()}
     if(data.rates){state.rates=data.rates;await dbSetSetting("rates",state.rates)}
     if(data.budgets){state.budgets=data.budgets;await dbSetSetting("budgets",state.budgets)}
     if(data.animationStyle){state.animationStyle=data.animationStyle;await dbSetSetting("animationStyle",state.animationStyle)}
-    alert(`✓ 匯入成功\n${data.items.length} 個品項已${label==="取代"?"還原":"加入"}`);
-    render();
-  }catch(err){alert("匯入失敗："+err.message)}
+  }catch(err){console.warn("[Import] metadata fail",err)}
+
+  /* === 完成報告 === */
+  let msg=`✓ 匯入完成\n\n成功: ${success} 筆\n失敗: ${failed.length} 筆`;
+  if(failed.length){
+    msg+="\n\n失敗的 archiveNum:\n"+failed.slice(0,15).map(f=>"#"+(f.archiveNum||"?")+(f.brand?" ("+f.brand+")":"")).join("\n");
+    if(failed.length>15)msg+=`\n... 還有 ${failed.length-15} 筆`;
+    console.warn("[Import] all failed items:",failed);
+  }
+  alert(msg);
+  render();
 }
 
 /* ============== INIT ============== */
