@@ -3805,6 +3805,143 @@ async function uploadRelinkResults(){
   render();
 }
 
+
+/* ============== BROKEN PHOTO SCANNER ============== */
+function showBrokenScanModal(){
+  /* State for scan progress */
+  const total=state.items.length;
+  const results={done:0,broken:[],healthy:0,noPhoto:0};
+  let scanCanceled=false;
+
+  function renderModalContent(content){
+    content.innerHTML="";
+    content.appendChild(h("div",{class:"text-center mb-4"},
+      h("span",{class:"stamp tilt-l"},"🔍 SCAN · 掃描壞圖"),
+      h("div",{class:"font-display text-xl mt-3"},"Broken Photo Scanner")
+    ));
+
+    if(results.done<total){
+      /* In-progress UI */
+      const pct=total?Math.round(results.done/total*100):0;
+      content.appendChild(h("div",{class:"text-center"},
+        h("div",{class:"font-display text-3xl"},results.done+" / "+total),
+        h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.14em"}},"SCANNING...")
+      ));
+      const pbarBg=h("div",{style:{background:"var(--line-2)",height:"6px",borderRadius:"3px",overflow:"hidden",margin:"14px 0"}});
+      pbarBg.appendChild(h("div",{style:{background:"var(--ink)",height:"100%",width:pct+"%",transition:"width .2s"}}));
+      content.appendChild(pbarBg);
+      content.appendChild(h("div",{class:"flex justify-around mt-3 mb-2",style:{fontSize:"12px"}},
+        h("div",{class:"text-center"},
+          h("div",{class:"font-display",style:{fontSize:"18px",color:"#3A5C2A"}},results.healthy),
+          h("div",{class:"font-mono text-xs",style:{color:"var(--mute)"}},"✓ HEALTHY")
+        ),
+        h("div",{class:"text-center"},
+          h("div",{class:"font-display",style:{fontSize:"18px",color:"#6B2218"}},results.broken.length),
+          h("div",{class:"font-mono text-xs",style:{color:"var(--mute)"}},"⚠ BROKEN")
+        ),
+        h("div",{class:"text-center"},
+          h("div",{class:"font-display",style:{fontSize:"18px",color:"var(--mute)"}},results.noPhoto),
+          h("div",{class:"font-mono text-xs",style:{color:"var(--mute)"}},"○ NO PHOTO")
+        )
+      ));
+      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>{scanCanceled=true;setS({modal:null})}},"× 停止掃描"));
+    } else {
+      /* Done UI - show results */
+      content.appendChild(h("div",{class:"text-center mb-3"},
+        h("div",{class:"font-display text-2xl"},results.broken.length+" 張壞圖檔"),
+        h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.1em"}},`掃描 ${total} 件 · 健康 ${results.healthy} · 壞 ${results.broken.length} · 無圖 ${results.noPhoto}`)
+      ));
+
+      if(results.broken.length===0){
+        content.appendChild(h("div",{class:"text-center py-6"},
+          h("div",{style:{fontSize:"48px"}},"🎉"),
+          h("div",{class:"font-display text-lg mt-2"},"All photos OK"),
+          h("div",{class:"font-mono text-xs mt-2",style:{color:"var(--mute)"}},"沒有壞圖檔了!")
+        ));
+      } else {
+        /* List of broken items */
+        const list=h("div",{class:"space-y-1.5",style:{maxHeight:"50vh",overflowY:"auto",border:"1px solid var(--line)",borderRadius:"4px",padding:"6px",background:"#fff"}});
+        results.broken.forEach(it=>{
+          const row=h("button",{class:"press w-full",style:{
+            display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px",
+            background:"#fff",border:"1px solid var(--line-2)",borderRadius:"3px",
+            cursor:"pointer",textAlign:"left",fontFamily:"inherit"
+          },onclick:()=>{
+            state.lookupReturn=true;
+            setS({modal:null,view:"detail",selected:it});
+          }});
+          /* placeholder thumbnail */
+          row.appendChild(h("div",{style:{width:"36px",height:"36px",background:"var(--line-2)",borderRadius:"2px",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:"0",fontSize:"16px",color:"var(--ink-3)"}},"?"));
+          const txt=h("div",{class:"flex-1 min-w-0"});
+          txt.appendChild(h("div",{class:"font-mono",style:{fontSize:"11px",color:"var(--accent-dark,#5C4828)",letterSpacing:"0.05em"}},getArchiveNo(it)));
+          txt.appendChild(h("div",{style:{fontSize:"12px",color:"var(--ink-2)",marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},(it.brand||"無品牌")+(it.location?" · 📍 "+it.location:"")));
+          row.appendChild(txt);
+          row.appendChild(h("div",{style:{color:"var(--ink-3)",fontSize:"16px"}},"›"));
+          list.appendChild(row);
+        });
+        content.appendChild(list);
+        content.appendChild(h("div",{class:"font-mono text-xs mt-3",style:{color:"var(--mute)",letterSpacing:"0.06em",padding:"0 4px",lineHeight:1.55}},
+          "💡 點任一項跳到詳情頁,按 EDIT → TAP TO CHANGE 上傳新照片 → FILE 存檔。"
+        ));
+      }
+      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null})},"× 關閉"));
+    }
+  }
+
+  state.modal={render:renderModalContent};
+  render();
+
+  /* Async batch scan — concurrency 6 */
+  (async()=>{
+    const CONCURRENCY=6;
+    let cursor=0;
+    async function testOne(item){
+      if(!item.photo){results.noPhoto++;return}
+      return new Promise(resolve=>{
+        const img=new Image();
+        let settled=false;
+        const finish=ok=>{
+          if(settled)return;
+          settled=true;
+          if(ok)results.healthy++;
+          else results.broken.push(item);
+          resolve();
+        };
+        img.onload=()=>finish(true);
+        img.onerror=()=>finish(false);
+        /* timeout 10s = treat as broken */
+        setTimeout(()=>finish(false),10000);
+        img.src=item.photo;
+      });
+    }
+    async function worker(){
+      while(cursor<state.items.length&&!scanCanceled){
+        const myIdx=cursor++;
+        const item=state.items[myIdx];
+        await testOne(item);
+        results.done++;
+        /* update UI every 5 items to avoid flicker */
+        if(results.done%5===0||results.done===state.items.length){
+          if(state.modal&&!scanCanceled){
+            const layer=document.getElementById("modal-layer");
+            const inner=layer&&layer.querySelector(".surface");
+            if(inner)renderModalContent(inner);
+          }
+        }
+      }
+    }
+    const workers=[];
+    for(let i=0;i<CONCURRENCY;i++)workers.push(worker());
+    await Promise.all(workers);
+    /* final render */
+    if(state.modal&&!scanCanceled){
+      const layer=document.getElementById("modal-layer");
+      const inner=layer&&layer.querySelector(".surface");
+      if(inner)renderModalContent(inner);
+    }
+  })();
+}
+
 /* ============== LOCATION MANAGER MODAL ============== */
 function showLocationManagerModal(){
   state.modal={render:content=>{
@@ -3972,6 +4109,14 @@ function viewLookup(){
   },onclick:()=>showLocationManagerModal()});
   manageBtn.appendChild(document.createTextNode("⚙ MANAGE · 位置管理"));
   prn.appendChild(manageBtn);
+  const scanBtn=h("button",{class:"press",style:{
+    padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
+    background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
+    color:"var(--ink-2)",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:"5px",
+    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace"
+  },onclick:()=>showBrokenScanModal()});
+  scanBtn.appendChild(document.createTextNode("🔍 SCAN · 掃描壞圖"));
+  prn.appendChild(scanBtn);
   const printBtn=h("button",{class:"press font-mono",style:{
     padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
     background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
