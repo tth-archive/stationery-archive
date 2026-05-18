@@ -1165,7 +1165,7 @@ lastEditedId:null,zoomItem:null,
 sortOrder:"newest",
 devMode:false,
 dismissedPairs:new Set(),
-lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,relinkQueue:[],relinkBusy:false,relinkPhase:"idle",scanResults:null,imageSearchResults:null};
+lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,editReturn:null,relinkQueue:[],relinkBusy:false,relinkPhase:"idle",scanResults:null,imageSearchResults:null};
 
 function emptyForm(){return{name:"",type:"貼紙",brand:"",location:"",tags:[],photo:null,photoRatio:null,photoEmb:null,note:"",price:"",currency:"TWD",store:"",purchaseDate:"",quantity:1,tripId:null}}
 
@@ -3314,7 +3314,7 @@ bbar.appendChild(h("button",{class:"bb-del",title:"刪除",onclick:()=>{
 /* BACK - middle, takes flex */
 bbar.appendChild(h("button",{class:"bb-back",onclick:goBackToGallery},"← BACK"));
 /* EDIT - biggest, right (primary action) */
-bbar.appendChild(h("button",{class:"bb-edit",onclick:()=>setS({view:"add",form:{...i,tags:[...i.tags]}})},"✎ EDIT"));
+bbar.appendChild(h("button",{class:"bb-edit",onclick:()=>{if(state.lookupReturn)state.editReturn="lookup";setS({view:"add",form:{...i,tags:[...i.tags]}})}},"✎ EDIT"));
 w.appendChild(bbar);
 
 /* Attach swipe nav after element is in DOM (E) */
@@ -4960,7 +4960,12 @@ async function save(btn,mode="done"){
           return;
         }
         /* If edit was launched from INDEX lookup, return there instead of gallery */
-        if(state.lookupReturn){state.lookupReturn=false;setS({view:"lookup"});return}
+        console.log("[Save] isEdit · lookupReturn="+!!state.lookupReturn+" · editReturn="+state.editReturn);
+        if(state.lookupReturn||state.editReturn==="lookup"){
+          state.lookupReturn=false;state.editReturn=null;
+          console.log("[Save] → returning to INDEX (lookup view)");
+          setS({view:"lookup"});return;
+        }
         setS({view:"gallery",ftype:i.type});
       }else if(mode==="next"){
         /* Continue mode: clear photo but keep sticky fields */
