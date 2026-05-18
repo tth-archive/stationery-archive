@@ -3808,6 +3808,65 @@ async function uploadRelinkResults(){
 
 
 
+
+/* ====== Preload all visible images in INDEX, then print ====== */
+async function preloadIndexImagesAndPrint(){
+  /* Find all imgs in current lookup view */
+  const imgs=Array.from(document.querySelectorAll('[data-view="lookup"] img'));
+  if(!imgs.length){window.print();return}
+
+  /* Force eager loading */
+  imgs.forEach(im=>{im.loading="eager"});
+
+  /* Create overlay with progress */
+  const overlay=document.createElement("div");
+  overlay.id="print-preload-overlay";
+  overlay.style.cssText="position:fixed;inset:0;background:rgba(40,32,28,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;color:#F0E6D2;padding:24px;text-align:center";
+  overlay.innerHTML=`
+    <div style="font-family:'Playfair Display','Noto Serif TC',serif;font-size:22px;margin-bottom:8px">準備列印</div>
+    <div style="font-family:'Noto Sans TC',sans-serif;font-size:13px;color:#C4B591;margin-bottom:18px">正在預載 ${imgs.length} 張圖片,請稍候</div>
+    <div id="preload-progress" style="font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:0.14em;color:#F0E6D2;margin-bottom:14px">0 / ${imgs.length}</div>
+    <div style="width:240px;height:5px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden">
+      <div id="preload-bar" style="height:100%;width:0%;background:#F0E6D2;transition:width .15s"></div>
+    </div>
+    <button id="preload-cancel" style="margin-top:24px;padding:7px 16px;background:transparent;border:1px solid rgba(255,255,255,.3);color:#C4B591;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.14em;cursor:pointer;border-radius:3px">× 取消</button>
+  `;
+  document.body.appendChild(overlay);
+
+  let canceled=false;
+  overlay.querySelector("#preload-cancel").onclick=()=>{canceled=true;overlay.remove()};
+
+  let loaded=0;
+  const update=()=>{
+    loaded++;
+    const pct=Math.round(loaded/imgs.length*100);
+    const pe=overlay.querySelector("#preload-progress");
+    const pb=overlay.querySelector("#preload-bar");
+    if(pe)pe.textContent=loaded+" / "+imgs.length;
+    if(pb)pb.style.width=pct+"%";
+  };
+
+  await Promise.all(imgs.map(im=>{
+    if(im.complete&&im.naturalWidth>0){update();return Promise.resolve()}
+    return new Promise(resolve=>{
+      let settled=false;
+      const done=()=>{if(settled)return;settled=true;update();resolve()};
+      im.onload=done;
+      im.onerror=done;
+      /* 8s timeout per image (failed loads still count, allow print to continue) */
+      setTimeout(done,8000);
+    });
+  }));
+
+  if(canceled){console.log("[Print] canceled by user");return}
+
+  /* Small delay so DOM has time to repaint */
+  await new Promise(r=>setTimeout(r,400));
+  overlay.remove();
+  /* Trigger native print */
+  window.print();
+}
+
 /* ====== PRINT CATEGORY SELECTION MODAL ====== */
 function showPrintCategoryModal(){
   state.modal={render:content=>{
@@ -3824,7 +3883,6 @@ function showPrintCategoryModal(){
         textAlign:"left"
       },onclick:()=>{
         setS({modal:null,view:"lookup",lookupView:view,lookupLocFilter:"all",lookupQ:""});
-        setTimeout(()=>{window.print()},350);
       }});
       const left=h("div",{},
         h("div",{},label),
@@ -4439,9 +4497,22 @@ function viewLookup(){
     return false;
   });
 
-  const total=h("div",{class:"font-mono mb-3",style:{fontSize:"10.5px",color:"var(--mute)",letterSpacing:"0.14em",textAlign:"right"}});
+  const totalRow=h("div",{class:"flex items-center justify-between mb-3","data-print":"hide"});
+  const printItBtn=h("button",{class:"press font-mono",style:{
+    padding:"5px 12px",fontSize:"10.5px",letterSpacing:"0.12em",
+    background:"#E8E0D0",border:"1px solid #8B6F4755",borderRadius:"3px",
+    color:"#4B3D2A",cursor:filtered.length?"pointer":"not-allowed",fontWeight:600,
+    opacity:filtered.length?1:0.4
+  },disabled:!filtered.length,onclick:()=>{
+    if(!filtered.length)return;
+    preloadIndexImagesAndPrint();
+  }});
+  printItBtn.appendChild(document.createTextNode("⎙ 列印 "+filtered.length+" 件"));
+  totalRow.appendChild(printItBtn);
+  const total=h("div",{class:"font-mono",style:{fontSize:"10.5px",color:"var(--mute)",letterSpacing:"0.14em"}});
   total.textContent="SHOWING "+filtered.length+" / "+state.items.length;
-  body.appendChild(total);
+  totalRow.appendChild(total);
+  body.appendChild(totalRow);
 
   if(filtered.length===0){
     body.appendChild(h("div",{class:"text-center py-12",style:{color:"var(--ink-3)"}},
