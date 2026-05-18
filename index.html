@@ -1165,7 +1165,7 @@ lastEditedId:null,zoomItem:null,
 sortOrder:"newest",
 devMode:false,
 dismissedPairs:new Set(),
-lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,relinkQueue:[],relinkBusy:false,relinkPhase:"idle",scanResults:null};
+lookupView:"location",lookupQ:"",lookupLocFilter:"all",lookupReturn:false,relinkQueue:[],relinkBusy:false,relinkPhase:"idle",scanResults:null,imageSearchResults:null};
 
 function emptyForm(){return{name:"",type:"貼紙",brand:"",location:"",tags:[],photo:null,photoRatio:null,photoEmb:null,note:"",price:"",currency:"TWD",store:"",purchaseDate:"",quantity:1,tripId:null}}
 
@@ -1343,7 +1343,7 @@ function getTypeColor(name){
 }
 function isBuiltinType(name){return DEFAULT_TYPES.includes(name)}
 
-function autoName(item){if(item.name)return item.name;const parts=[];if(item.tags&&item.tags.length)parts.push(item.tags.slice(0,2).join(""));parts.push(item.type);const seq=state.items.filter(x=>x.type===item.type&&!x.name).length+1;return`${parts.join(" ")} #${seq}`}
+function autoName(item){if(item.name)return item.name;const parts=[];if(item.tags&&item.tags.length)parts.push(item.tags.slice(0,2).join(""));parts.push(item.type);return`${parts.join(" ")} #${item.archiveNum||"?"}`}
 function getTagGroup(tag){return state.tagGroups.find(g=>g.tags.includes(tag))}
 async function saveTagGroups(){
   /* Safety net: normalize every group's tags on save — trim whitespace
@@ -3806,6 +3806,129 @@ async function uploadRelinkResults(){
 }
 
 
+
+/* ============== IMAGE SEARCH MODAL (以圖搜圖) ============== */
+function showImageSearchModal(){
+  state.imageSearchResults=null;
+
+  function renderModalContent(content){
+    content.innerHTML="";
+    content.appendChild(h("div",{class:"text-center mb-4"},
+      h("span",{class:"stamp tilt-l",style:{borderColor:"#5C7A8F",color:"#2D4A6A",background:"rgba(92,122,143,.06)"}},"🖼 IMAGE · 以圖搜圖"),
+      h("div",{class:"font-display text-xl mt-3"},"Search by Image")
+    ));
+
+    if(!state.imageSearchResults){
+      /* Picker UI */
+      content.appendChild(h("div",{style:{padding:"14px",background:"#FFF8E1",border:"1px solid #E8C97D",borderRadius:"4px",fontSize:"13px",color:"var(--ink-2)",lineHeight:1.6,marginBottom:"14px"}},
+        h("div",{class:"font-mono mb-1",style:{fontSize:"11px",letterSpacing:"0.14em",color:"#7C5C00"}},"💡 怎麼用"),
+        h("div",{},"選一張照片(或拍一張),系統用 ML 比對所有 ",h("b",{},state.items.filter(it=>it.photoEmb).length+" 件")," 館藏,找出最相似的貼紙。")
+      ));
+
+      const fileInp=h("input",{type:"file",accept:"image/*",class:"hidden",onchange:async(e)=>{
+        const f=e.target.files[0];if(!f)return;
+        /* Show processing state */
+        state.imageSearchResults={processing:true};
+        if(state.modal){
+          const layer=document.getElementById("modal-layer");
+          const inner=layer&&layer.querySelector(".surface");
+          if(inner)renderModalContent(inner);
+        }
+        try{
+          const r=await compress(f);
+          if(!r.photoEmb){alert("無法計算 ML 特徵");state.imageSearchResults=null;render();return}
+          const t=__base64ToFloat32(r.photoEmb);
+          if(!t){alert("特徵解析失敗");state.imageSearchResults=null;render();return}
+          const results=[];
+          for(const item of state.items){
+            if(!item.photoEmb)continue;
+            const v=__base64ToFloat32(item.photoEmb);
+            if(!v)continue;
+            results.push({item,sim:cosineSimilarity(t,v)});
+          }
+          results.sort((a,b)=>b.sim-a.sim);
+          state.imageSearchResults={photo:r.photo,results:results.slice(0,20)};
+        }catch(err){
+          alert("搜尋失敗: "+err.message);
+          state.imageSearchResults=null;
+        }
+        if(state.modal){
+          const layer=document.getElementById("modal-layer");
+          const inner=layer&&layer.querySelector(".surface");
+          if(inner)renderModalContent(inner);
+        }
+      }});
+      content.appendChild(fileInp);
+
+      const pickBtn=h("button",{class:"press w-full",style:{
+        padding:"14px",background:"var(--ink)",color:"var(--paper)",borderRadius:"4px",
+        border:"none",cursor:"pointer",fontSize:"14px",fontWeight:600,letterSpacing:"0.04em"
+      },onclick:()=>fileInp.click()});
+      pickBtn.appendChild(document.createTextNode("📷 選擇照片"));
+      content.appendChild(pickBtn);
+
+      content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-3",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null,imageSearchResults:null})},"× 關閉"));
+      return;
+    }
+
+    if(state.imageSearchResults.processing){
+      content.appendChild(h("div",{class:"text-center py-8"},
+        h("div",{class:"font-display text-xl"},"處理中..."),
+        h("div",{class:"font-mono text-xs mt-2",style:{color:"var(--mute)",letterSpacing:"0.14em"}},"COMPUTING ML EMBEDDING & MATCHING")
+      ));
+      return;
+    }
+
+    /* Results UI */
+    const data=state.imageSearchResults;
+    if(data.photo){
+      const queryWrap=h("div",{class:"text-center mb-3"});
+      queryWrap.appendChild(h("img",{src:data.photo,style:{width:"96px",height:"96px",objectFit:"cover",borderRadius:"4px",border:"1px solid var(--line)",display:"block",margin:"0 auto"}}));
+      queryWrap.appendChild(h("div",{class:"font-mono mt-1",style:{fontSize:"10px",color:"var(--mute)",letterSpacing:"0.1em"}},"QUERY · 妳的查詢圖"));
+      content.appendChild(queryWrap);
+    }
+    content.appendChild(h("div",{class:"text-center font-mono text-xs mb-3",style:{color:"var(--mute)",letterSpacing:"0.06em"}},`找到 ${data.results.length} 個相似結果(由高到低)`));
+
+    const list=h("div",{class:"space-y-1.5",style:{maxHeight:"50vh",overflowY:"auto"}});
+    data.results.forEach(r=>{
+      const card=h("button",{class:"press w-full",style:{
+        display:"flex",alignItems:"center",gap:"10px",padding:"8px 10px",
+        background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
+        cursor:"pointer",textAlign:"left",fontFamily:"inherit"
+      },onclick:()=>{state.lookupReturn=true;setS({modal:null,imageSearchResults:null,view:"detail",selected:r.item})}});
+      const thumb=h("div",{style:{width:"42px",height:"42px",borderRadius:"3px",overflow:"hidden",border:"1px solid var(--line-2)",flexShrink:"0",background:"var(--line-2)"}});
+      if(r.item.photo){
+        const im=h("img",{style:{width:"100%",height:"100%",objectFit:"cover"}});
+        im.src=r.item.photo;
+        thumb.appendChild(im);
+      } else {
+        thumb.appendChild(h("div",{style:{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"var(--ink-3)",fontSize:"14px"}},"?"));
+      }
+      card.appendChild(thumb);
+      const info=h("div",{class:"flex-1 min-w-0"});
+      info.appendChild(h("div",{class:"font-mono",style:{fontSize:"10.5px",color:"#5C4828",letterSpacing:"0.05em"}},getArchiveNo(r.item)));
+      info.appendChild(h("div",{style:{fontSize:"12px",color:"var(--ink-2)",marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},autoName(r.item)));
+      const tail=[];
+      if(r.item.location)tail.push("📍 "+r.item.location);
+      tail.push(Math.round(r.sim*100)+"%");
+      info.appendChild(h("div",{class:"font-mono",style:{fontSize:"10px",color:r.sim>=0.85?"#3A5C2A":"var(--ink-3)",marginTop:"1px",fontWeight:r.sim>=0.85?600:400}},tail.join(" · ")));
+      card.appendChild(info);
+      card.appendChild(h("div",{style:{color:"var(--ink-3)",fontSize:"14px"}},"›"));
+      list.appendChild(card);
+    });
+    content.appendChild(list);
+
+    content.appendChild(h("button",{class:"w-full press mt-3",style:{
+      padding:"8px",background:"#fff",color:"var(--ink-2)",borderRadius:"3px",
+      border:"1px solid var(--line)",cursor:"pointer",fontSize:"12px",letterSpacing:"0.04em"
+    },onclick:()=>{state.imageSearchResults=null;render()}},"← 重新選照片"));
+    content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-2",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null,imageSearchResults:null})},"× 關閉"));
+  }
+
+  state.modal={render:renderModalContent};
+  render();
+}
+
 /* ============== BROKEN PHOTO SCANNER ============== */
 function showBrokenScanModal(){
   /* Initialize fresh scan results */
@@ -4248,6 +4371,14 @@ function viewLookup(){
   },onclick:()=>showBrokenScanModal()});
   scanBtn.appendChild(document.createTextNode("🔍 SCAN · 掃描壞圖"));
   prn.appendChild(scanBtn);
+  const imgSearchBtn=h("button",{class:"press",style:{
+    padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
+    background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
+    color:"var(--ink-2)",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:"5px",
+    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace"
+  },onclick:()=>showImageSearchModal()});
+  imgSearchBtn.appendChild(document.createTextNode("🖼 IMAGE · 以圖搜圖"));
+  prn.appendChild(imgSearchBtn);
   const printBtn=h("button",{class:"press font-mono",style:{
     padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
     background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
@@ -4274,6 +4405,10 @@ function viewLookup(){
     if((it.name||"").toLowerCase().includes(q))return true;
     if((it.location||"").toLowerCase().includes(q))return true;
     if(it.tags&&it.tags.some(t=>t.toLowerCase().includes(q)))return true;
+    /* Match padded archive format (e.g. STK-2026-0167) */
+    try{if(getArchiveNo(it).toLowerCase().includes(q))return true}catch(e){}
+    /* Match auto-generated name (e.g. "韓系郵票 貼紙 #167") */
+    try{if(autoName(it).toLowerCase().includes(q))return true}catch(e){}
     return false;
   });
 
