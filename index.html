@@ -3807,6 +3807,41 @@ async function uploadRelinkResults(){
 
 
 
+
+/* ====== PRINT CATEGORY SELECTION MODAL ====== */
+function showPrintCategoryModal(){
+  state.modal={render:content=>{
+    content.appendChild(h("div",{class:"text-center mb-4"},
+      h("span",{class:"stamp tilt-l",style:{borderColor:"#8B6F47",color:"#5C4828",background:"rgba(139,111,71,.06)"}},"🖨 PRINT · 列印"),
+      h("div",{class:"font-display text-xl mt-3"},"要依哪個分類列印?"),
+      h("div",{class:"font-mono text-xs mt-1",style:{color:"var(--mute)",letterSpacing:"0.06em"}},"印出後可用瀏覽器「儲存為 PDF」")
+    ));
+    function makeOpt(label,sub,view){
+      const b=h("button",{class:"w-full press mb-2",style:{
+        background:"#fff",color:"var(--ink)",padding:"14px 14px",borderRadius:"4px",
+        fontSize:"13.5px",fontWeight:600,fontFamily:"'Noto Sans TC',sans-serif",
+        border:"1px solid var(--line)",display:"flex",alignItems:"center",justifyContent:"space-between",
+        textAlign:"left"
+      },onclick:()=>{
+        setS({modal:null,view:"lookup",lookupView:view,lookupLocFilter:"all",lookupQ:""});
+        setTimeout(()=>{window.print()},350);
+      }});
+      const left=h("div",{},
+        h("div",{},label),
+        h("div",{class:"font-mono",style:{fontSize:"10.5px",color:"var(--mute)",letterSpacing:"0.05em",marginTop:"2px"}},sub)
+      );
+      b.appendChild(left);
+      b.appendChild(h("span",{style:{fontSize:"15px",color:"var(--ink-3)"}},"›"));
+      return b;
+    }
+    content.appendChild(makeOpt("📍 按位置 (LOC)","以 A6_book_01 / 1/3 / 夾1_1/4 等位置分組","location"));
+    content.appendChild(makeOpt("🏷 按品牌 (BRAND)","以 Mind Wave / suatelier / Midori 等品牌分組","brand"));
+    content.appendChild(makeOpt("🕐 按最新 (RECENT)","以加入日期由新到舊排序","recent"));
+    content.appendChild(h("button",{class:"w-full py-2.5 text-xs font-mono press mt-2",style:{color:"var(--mute)",letterSpacing:"0.16em"},onclick:()=>setS({modal:null})},"× 取消"));
+  }};
+  render();
+}
+
 /* ============== IMAGE SEARCH MODAL (以圖搜圖) ============== */
 function showImageSearchModal(){
   state.imageSearchResults=null;
@@ -4355,37 +4390,29 @@ function viewLookup(){
 
   /* Action buttons: Manage / Print */
   const prn=h("div",{class:"flex justify-end gap-2"});
-  const manageBtn=h("button",{class:"press",style:{
-    padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
-    background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
-    color:"var(--ink-2)",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:"5px",
-    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace"
+  /* INDEX action row: MANAGE (cream) + IMAGE (warm) */
+  const manageBtn=h("button",{class:"press flex-1",style:{
+    padding:"7px 10px",fontSize:"11px",letterSpacing:"0.12em",
+    background:"#FBF5E6",border:"1px solid #D8C896",borderRadius:"4px",
+    color:"#5C4828",cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:"5px",
+    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace",fontWeight:600
   },onclick:()=>showLocationManagerModal()});
   manageBtn.appendChild(document.createTextNode("⚙ MANAGE · 位置管理"));
   prn.appendChild(manageBtn);
-  const scanBtn=h("button",{class:"press",style:{
-    padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
-    background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
-    color:"var(--ink-2)",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:"5px",
-    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace"
-  },onclick:()=>showBrokenScanModal()});
-  scanBtn.appendChild(document.createTextNode("🔍 SCAN · 掃描壞圖"));
-  prn.appendChild(scanBtn);
-  const imgSearchBtn=h("button",{class:"press",style:{
-    padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
-    background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
-    color:"var(--ink-2)",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:"5px",
-    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace"
-  },onclick:()=>showImageSearchModal()});
+  const imgSearchInp=h("input",{type:"file",accept:"image/*",class:"hidden",onchange:async(e)=>{
+    const f=e.target.files[0];if(!f)return;
+    await showImageSearchModal(f);
+    e.target.value="";
+  }});
+  prn.appendChild(imgSearchInp);
+  const imgSearchBtn=h("button",{class:"press flex-1",style:{
+    padding:"7px 10px",fontSize:"11px",letterSpacing:"0.12em",
+    background:"#F2E4D0",border:"1px solid #C8A878",borderRadius:"4px",
+    color:"#5C4020",cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:"5px",
+    fontFamily:"'JetBrains Mono','Noto Sans TC',monospace",fontWeight:600
+  },onclick:()=>imgSearchInp.click()});
   imgSearchBtn.appendChild(document.createTextNode("🖼 IMAGE · 以圖搜圖"));
   prn.appendChild(imgSearchBtn);
-  const printBtn=h("button",{class:"press font-mono",style:{
-    padding:"5px 11px",fontSize:"10.5px",letterSpacing:"0.14em",
-    background:"#fff",border:"1px solid var(--line)",borderRadius:"3px",
-    color:"var(--ink-2)",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:"5px"
-  },onclick:()=>doLookupPrint()});
-  printBtn.appendChild(document.createTextNode("⎙ PRINT · 列印"));
-  prn.appendChild(printBtn);
   ctrl.appendChild(prn);
 
   w.appendChild(ctrl);
@@ -4763,8 +4790,35 @@ dsec.appendChild(h("div",{class:"sec-h"},"DATA",h("span",{class:"zh"},"資料管
 dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"var(--forest)",color:"#fff",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace"},onclick:exportData},"↓ EXPORT BACKUP"));
 const iiR=h("input",{type:"file",accept:".json",class:"hidden",onchange:e=>importData(e,"replace")});dsec.appendChild(iiR);
 const iiM=h("input",{type:"file",accept:".json",class:"hidden",onchange:e=>importData(e,"merge")});dsec.appendChild(iiM);
-/* === Relink photos entry button === */
-dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"#E5DCED",color:"#3D2D4A",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace",border:"1px solid #7A6B8F55"},onclick:()=>setS({view:"relinkPhotos",relinkQueue:[],relinkPhase:"idle"})},"📷 RELINK PHOTOS · 重新綁定照片"));
+/* UTILITIES toolbox */
+const utilSec=h("div",{style:{marginBottom:"18px",padding:"14px 12px",background:"#FBF5E6",border:"1px solid #E8DCB8",borderRadius:"6px"}});
+utilSec.appendChild(h("div",{class:"font-mono mb-3",style:{fontSize:"10.5px",letterSpacing:"0.18em",color:"#7C5C00",fontWeight:700}},"🧰 UTILITIES · 工 具 箱"));
+utilSec.appendChild(h("button",{class:"w-full press mb-2",style:{
+  background:"#DCE5EE",color:"#2D4D6A",padding:"11px 12px",borderRadius:"4px",
+  fontSize:"12.5px",fontWeight:700,letterSpacing:"0.06em",fontFamily:"'Noto Sans TC',sans-serif",
+  border:"1px solid #5C8DAC55",display:"flex",alignItems:"center",justifyContent:"space-between"
+},onclick:()=>showBrokenScanModal()},
+  h("span",{},"🔍  SCAN · 掃描壞圖"),
+  h("span",{style:{fontSize:"15px",opacity:0.5}},"›")
+));
+utilSec.appendChild(h("button",{class:"w-full press mb-2",style:{
+  background:"#E5DCED",color:"#3D2D4A",padding:"11px 12px",borderRadius:"4px",
+  fontSize:"12.5px",fontWeight:700,letterSpacing:"0.06em",fontFamily:"'Noto Sans TC',sans-serif",
+  border:"1px solid #7A6B8F55",display:"flex",alignItems:"center",justifyContent:"space-between"
+},onclick:()=>setS({view:"relinkPhotos",relinkQueue:[],relinkPhase:"idle"})},
+  h("span",{},"📷  RELINK PHOTOS · 重新綁定照片"),
+  h("span",{style:{fontSize:"15px",opacity:0.5}},"›")
+));
+utilSec.appendChild(h("button",{class:"w-full press",style:{
+  background:"#E8E0D0",color:"#4B3D2A",padding:"11px 12px",borderRadius:"4px",
+  fontSize:"12.5px",fontWeight:700,letterSpacing:"0.06em",fontFamily:"'Noto Sans TC',sans-serif",
+  border:"1px solid #8B6F4755",display:"flex",alignItems:"center",justifyContent:"space-between"
+},onclick:()=>showPrintCategoryModal()},
+  h("span",{},"🖨  PRINT · 列印索引"),
+  h("span",{style:{fontSize:"15px",opacity:0.5}},"›")
+));
+utilSec.appendChild(h("div",{class:"font-mono mt-2.5",style:{fontSize:"10px",color:"var(--mute)",letterSpacing:"0.04em",lineHeight:1.5,padding:"0 2px"}},"💡 SCAN 與 RELINK 是維護工具,日常用不到。PRINT 會跳分類選擇。"));
+dsec.appendChild(utilSec);
 
 dsec.appendChild(h("button",{class:"w-full press mb-2",style:{background:"#DCE5EE",color:"#2D4D6A",padding:"10px",borderRadius:"4px",fontSize:"12px",fontWeight:700,letterSpacing:"0.14em",fontFamily:"'JetBrains Mono',monospace",border:"1px solid #5C8DAC55"},onclick:()=>iiR.click()},"↑ IMPORT (取代)"));
 dsec.appendChild(h("div",{class:"font-mono mb-3",style:{fontSize:"10px",color:"var(--mute)",letterSpacing:"0.06em",lineHeight:1.5,paddingLeft:"4px"}},"清空現有資料、用備份完整覆蓋（編號一致）"));
