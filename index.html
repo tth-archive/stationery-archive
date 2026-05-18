@@ -4888,6 +4888,8 @@ async function save(btn,mode="done"){
           if(pair)addDismissedPair(pair.a.id,pair.b.id).catch(e=>console.warn("[Scan] persist edit failed",e));
           return;
         }
+        /* If edit was launched from INDEX lookup, return there instead of gallery */
+        if(state.lookupReturn){state.lookupReturn=false;setS({view:"lookup"});return}
         setS({view:"gallery",ftype:i.type});
       }else if(mode==="next"){
         /* Continue mode: clear photo but keep sticky fields */
